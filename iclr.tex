@@ -1,0 +1,218 @@
+% for RL, this strategy removes the need for disjoint sub-tasks
+% mention review!!
+\documentclass{article} % For LaTeX2e
+
+\usepackage{iclr2023_conference,times}
+\usepackage{comment}
+\usepackage[pdftex]{graphicx}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{url}
+%\usepackage{enquote}
+
+\title{Replay-based continual learning with constant time complexity}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{Alexander Krawczyk and Alexander Gepperth \thanks{\url{www.gepperth.net/alexander}} \\
+Department of Applied Computer Science\\
+University of Applied Sciences Fulda\\
+Leipziger Str. 123, 36037 Fulda, Germany \\
+\texttt{alexander.\{krawczyk,gepperth\}@cs.hs-fulda.de} \\
+}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+\newcommand{\vgamma}{{\bm \gamma}}
+\newcommand{\enquote}[1]{"#1"}
+
+%\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+We propose a new constant-time approach to replay-based continual learning (CL). 
+%
+GR is a strategy that protects existing knowledge from previous and inaccessible training sessions (sub-tasks) by having auxilliary generator networks produce samples from those sub-tasks and merging them with the current sub-task.
+%
+The main innovation we propose is twofold: first of all, we propose \textbf{selective modification} of existing knowledge only where it overlaps with the current sub-task. On the other hand,
+we propose \textbf{selective replay} of samples, to protect existing knowlege in opverlapping areas only. 
+
+Since only the overlapping parts of previous knowledge need to be protected against CF, fewer samples can be replayed. We use this to  maintain a constant ratio between real and generated samples, irrespectively of the number of processed sub-tasks. Consequently, training time is kept constant for all sub-tasks.
+%
+We test the proposed strategy on CL problems derived from visual classification and reinforcement learning problems, and present a comparison to VAE-based generative replay.
+\end{abstract}
+
+\section{Introduction}
+\begin{comment}
+PLAN:
+variant generation demonstrieren mit flat 2-laer dcgmm. mnist, svhn
+incremental property von gmms demonstrieren: nur betroffene gebiete werden ersetzt!
+varint generation demo mit VAE auf mnist, SVHN. aber warum fkt das nicht --> vaes sind nicht incremental, man müsste alles abspielen um sie auf stand zu bringen
+focus on replay, not on absolute per.
+compare to genrep und show time complexity of learning for 3-tasks
+show that perf on past tasks does not degrade most for 9-1 but also ok for 1-9, cf nadzeya
+assumptiomn: only small extension of existing knowledge at each task
+\end{comment}
+% Context: CL
+% context: genrep, marginal conditional replay. cite successes, ...
+% motivation: discuss inear dependency, give fromula and graph. problems:
+% a) T-1 dependency for generated samples b) all classes quiprobable c)unbalanced distr for marginal replay??
+% d) smallest additions --> biggest replay! cite nadzeya
+% goals/contribution: 
+% relwork
+% basic approach: 
+% ---
+% methods, data!
+% discussion
+%
+% context
+This contribution is in the context of continual learning (CL), a recent flavor of machine learning that investigates learning from data with a non-stationary distribution.
+A common effect in this context is catastrophic forgetting (CS), an effect where previously acquired knowledge is abruptly lost after a change in the data distribution. 
+In the default scenario for CL (see, e.g., \cite{bagus22b}), a number of assumptions are made in order to render CL more tractable: first of all, distribution changes are assumed to be abrupt, partitioning the data stream into \textit{sub-tasks} of stationary distribution. Then, sub-task onsets are supposed to be known, instead of inferring them from data. And lastly, sub-tasks are assumed to be disjoint, i.e., not containing the same classes in supervised scenarios. Please refer to \cref{fig:default} for a visualization of the default scenario. Together with this goes the constraint that no, or only a few, samples may be stored.
+%
+\begin{figure}[b]
+    \centering
+    \includegraphics*[width=0.7\textwidth,page=4,viewport=0cm 0cm 14.3cm 5cm]{figs.pdf}
+    \caption{The default scenario for (supervised) CL. The data stream is assumed to be partitioned into \textit{sub-tasks} $T_i$. Statistics within a sub-task are considered stationary, and sub-task data and labels (targets) are assumed to be disjoint, i.e., from different classes (MNIST classes used here for visualization). Sub-task onsets are assumed to be known as well.
+    \label{fig:default}
+    }
+\end{figure}
+%
+% context: GR
+A very promising line of work on CL in the default scenario are rehearsal methods. Rehearsal aims at preventing CF by using samples from previous sub-tasks to augment the current one. On the one hand, there are \enquote{true} rehearsal methods which use a small number of stored samples for augmentation. On the other hand, there are \textit{pseudo-rehearsal} or \textit{replay} methods, where the samples to augment the current sub-task are produced in unlimited number by a generator, which removes the need to store samples. A schematics of the training process in generative replay is given in \cref{fig:genrep}.
+\begin{figure}[t]
+    \centering
+    \includegraphics*[height=3cm,page=1,viewport=0in 0in 7.5in 2in]{figs.pdf}
+    \caption{In generative replay, a \textit{scholar} is trained at every sub-task. Scholars are composed of generator and solver modules. The solver performs the task, e.g., classification, whereas the generator serves as a memory for samples from previous sub-tasks $T_{i'}$, $i' < i$. Please note that the amount of generated data usually far exceeds the amount of new data. }
+    \label{fig:genrep}
+\end{figure}
+%
+% Problems with CL 
+As promising as replay seems to be as a principled approach to CL, it presents several challenges: 
+First of all, if DNNs are employed as solvers and generators, then all classes must be represented in equal proportion in the training data at every sub-task, since DNNs are sensible to class frequencies. 
+For the simple case of a single new class of $D$ samples per sub-task, the generator must produce $(i-1)D$ samples at sub-task $i$ in order to always train with $D$ samples per class.
+By this linear dependency, even very small additions to a large body of existing knowledge (a common use-case) require a large amount of samples for replay, see, e.g., \cite{nadz22}. Since replay is always a lossy process, this imposes a severe limit on GR-based CL performance.
+%
+%Furthermore, DNN solvers and generators must be re-trained \textit{from scratch} at every sub-task: existing weight configurations are discarded instead of re-used to speed up training. 
+%In addition, we are at the mercy of the generator to produce samples in equal frequencies, although this can me mitigated somewhat by class-conditional generation of samples \cite{timalex}.
+Lastly, 
+%
+\subsection{Approach}
+%
+We propose a replay-based approach ((visualized in \cref{fig:var}) relying on fully probabilistic models of machine learning, namely Gaussian Mixture Models (GMMs) and corresponding convolutional extensions introduced in \cite{gmmsgd,dcgmm-ijcnn}.
+%In contrast to DNNs where knowledge is represented in a completely delocalized fashion, GMMs implement a semi-localized knowledge representation.
+A key concept is an explicit similarity (probability) measure defined by centroids (prototypes) and covariance matrices, which can be used to compare incoming data to existing knowledge, represented by GMM \textit{components}. 
+As shown in \cite{sgdgmm}, only the GMM components that are similar to incoming data are adapted. Conversely, knowledge represented by dissimilar components is unaffected and thus protected against CF. 
+Incoming data are augmented by sampling from protoypes in overlapping areas, i.e., prototypes with highest similarity, see \cref{fig:approach}, which ensures that the prototypes are adapted but not overwritten. 
+\begin{figure}
+    \centering
+    \includegraphics*[width=0.7\textwidth,page=3,viewport=0in 0in 12cm 3cm]{figs.pdf}
+    \caption{The essence of the proposed ReCT-CL approach, represented in data space. At every sub-task $T_i$, data with new statistics (red area) is presented to a scholar which has acquired knowledge of previous sub-tasks (blue area), which is encoded by GMM \textit{components} (yellow crosses), see text for details. The diagrams represent the situation before (left) and after (right) training on sub-task $T_i$. Training data for $T_i$ is created by a union of samples from $T_i$ and samples generated from the components in the overlapping area. After training, components in this area have shifted to represent the new statistics as well. }
+    \label{fig:approach}
+
+\end{figure}
+%
+\subsection{Contributions}
+The salient points of ReCT-CL are:
+%
+\par\noindent\textbf{Selective replay:} existing knowledge is not replayed indiscriminately, but only where significant overlap with new data exists. The detection of overlaps is an intrinsic property of the employed GMMs.
+%
+\par\noindent\textbf{Selective replacement:} The scholar is not re-initialized between sub-tasks, and existing knowledge is only 
+modified where an overlap with new data exists. Selective replacement is an intrinsic property of GMMs.
+%
+\par\noindent\textbf{Constant time complexity:} Since only a small part of existing knowledge needs to be considered for replay at each sub-task, the number of generated/replayed samples can be small as well. The ratio between new and generated data can therefore be fixed, irrespectectively of past sub-tasks.
+%
+\subsection{Related work}
+
+
+\section{Methods}
+\label{sec:methods}
+%
+\subsection{Data}\label{sec:data}
+% MNIST, FMNIST, RL-data
+%
+\subsection{ReCT-CL using GMMs and DCGMMs}\label{sec:gmm}
+%
+\begin{figure}[b]
+    \centering
+    \includegraphics*[height=3cm,page=2,viewport=0in 0in 6in 2in]{figs.pdf}
+    \caption{The proposed ReCT-CL approach. The main difference to conventional generative replay is that new data are used to \textit{query} the current scholar for similar samples. The ratio of generated and new data can thus be chosen constant as explained in the text. The scholar is not reinitialized but re-trained from its current state with generated and new data.}
+    \label{fig:var}
+\end{figure}
+%
+% big picture I
+In contrast to conventional replay, where a scholar is composed of a generator and a solver network (see \cref{fig:gr}), ReCT-CL proposes a scholar where single network performs both functions. This network is composed of a Gaussian Mixture Model (GMM) layer followed by a linear regression readout layer. All layers are trained by SGD according to \cite{sgdgmm}. For improving classification and generation performance, we have also used deep convolutional GMMs (DCGMMs) as described in \cref{dcgmm}, which can contain a succession of convolutional GMM, half-convolution and pooling layers. The mathematical treatment of ReCT-CL scholars will assume a single GMM layer only without loss of generality. 
+\\
+% GMMs
+GMMs describe data distributions by a set of $K$ \textit{components}, consisting of component weights $\pi_k$, centroids $\vmu_k$ and covariance matrices $\mSigma_k$. A data sample $\vx$ is assigned a probability $p(\vx) = \sum_k \pi_k \mathcal N(\vx ; \vmu_k, \mSigma_k)$ as a weighted sum of normal distributions $\mathcal N(\vx; \vmu_k, \mSigma_k)$. Training of GMMs is performed as detailed in \cite{sgdgmm} by adapting centroids, covariance matrices and component weights through the SGD-based minimization of the log-likelihood $\mathcal L=\sum_n \log \sum_k \pi_k \mathcal N(\vx_n; \vmu_k,\mSigma_k)$.
+\\
+% classification and vartiant gen
+The GMMs emplayed in ReCT-CL have two basic functions: classification and variant generation.
+For classification, 
+we first compute the GMM \textit{responsibilities} $\gamma_k(\vx_n) = \frac{\pi_k\mathcal N(\vx_n; \vmu_k,\mSigma_k)}{\sum_j \pi_j \mathcal N(\vx_n; \vmu_j,\mSigma_j)}$ and feed them into a linear regression layer as $\vo(\vx_n) = \mW\vgamma(\vx_n) + \vb$.
+Variant generation is a special case of GMM sampling: given a data sample $\vx_n$, we first determine the closest component: $i = \text{argmax}_k \gamma_k(\vx_n)$ and then draw a sample from the normal distribution defined by that component: $\hat \vx \sim \mathcal N(\cdot; \vmu_i, \mSigma_i)$.
+\\
+% suitability for CL training
+To ensure CL capacity, ReCT-CL training relies on three key concepts: loss masking, MSE classification, and max-component approximation for GMMs. 
+Loss masking is a technique that assigns different learning rates $\epsilon_n$ to individual samples $\vec x_n$, depending on whether they are classified correctly ($\chi_n = 1$) or not ($\chi_n = 0$): 
+$\epsilon_n = \chi_n\epsilon_\uparrow + (1-\chi_n)\epsilon_{\downarrow}$.
+In order to make the classification layer suitable for CL, we employ an MSE loss instead of cross-entropy for target values $\vt_n$ and model outputs $vo(\vx_n)$: $\mathcal L_\text{MSE} = \sum_n ||\vo(\vx_n)-\vt_n||^2$. % REASON??
+Lastly, we use the annealing procedure and max-component approximation to the GMM log-likelihood described in \cref{sgdgmm} for training the GMM layer. This ensures that only best-matching (most similar) component is adapted (plus nearby components, at least during early training stages), whereas dissimilar components are unaffected. The neighbourhood of affected components around the best-matching one is defined by the annealing radius $r(t)$ which is automatically reduced over time, see \cite{sgdgmm} for details.
+\\
+% high-level
+\Cref{fig:var} shows the high-level logic of ReCT-CL. We assume that unknown data from a new sub-task arrives in a batch. 
+Each sample of that batch is used to \textit{query} the GMM for a similar, known sample using variant generation. Mixing new and generated samples in a defined, constant proportion creates the training data for the current sub-task. 
+This is the driving idea behind ReCT-CL: 
+a new sample causes adaptation in its best-matching component. However, variants generated by that sample will almost always cause adaptation to the same component. The component will therefore converge to a compromise between new data and existing knowledge, while
+dissimilar components stay completely unaffected. 
+%
+%
+\subsection{VAE-based generative replay}
+
+
+\section{Experiments}\label{sec:exp}
+% 
+\subsection{Intrinsic CL capacity of GMMs}
+\subsection{Variant generation with GMMs and DCGMMs}
+\subsection{Model comparison at variable time complexity}
+\subsection{Model comparison at constant time complexity}
+\subsection{Generalization: ReCT-CL using DCGMMs}
+
+\section{Discussion and conclusion}
+% Assumptions: a) overlap is small compared to existzing knowledge. Gets more reasonable as more subtasks are added
+% impossible to measure how much knowledge a new sub-task contribnutes. Nr samples !=v amount of knowledge.
+% how to balance in VAE-replay?? based on nr of samples only!
+% outlier detection possible as well!
+%
+\subsubsection*{Author Contributions}
+AK created the library used for ReCT-CL experiments, based on earlier code by AG. AG wrote a significant part of the manuscript and designed the experiments. AK conducted he GMM-based experiments, AG the VAE-based ones. Both contributed to the evaluation and the description of the experiments in the manuscript, as well as to proof-reading.
+%
+%\subsubsection*{Acknowledgments}
+%Use unnumbered third level headings for the acknowledgments. All
+%acknowledgments, including those to funding agencies, go at the end of the paper.
+%
+\bibliographystyle{plain}
+\bibliography{CRL,continual}
+
+\appendix
+\section{Appendix}
+You may include other additional sections here.
+
+\end{document}
