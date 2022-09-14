@@ -1,5 +1,7 @@
 % for RL, this strategy removes the need for disjoint sub-tasks
 % mention review!!
+% initial training anders behandeln, erwähnen!
+
 \documentclass{article} % For LaTeX2e
 
 \usepackage{iclr2023_conference,times}
@@ -147,6 +149,14 @@ modified where an overlap with new data exists. Selective replacement is an intr
 %
 \subsection{Data}\label{sec:data}
 % MNIST, FMNIST, RL-data
+\noindent For the evaluation we use the following image datasets:
+\smallskip\\
+\noindent\textbf{MNIST}~\cite{LeCun1998} consists of $60\,000$ $28$\,$\times$\,$28$ gray scale images of handwritten digits (0-9).\\
+\noindent\textbf{FashionMNIST}~\cite{Xiao2017} consists of images of clothes in 10 categories and is structured like MNIST. \\
+\noindent\textbf{CRL}~\cite{bagus2022b} contains 30000 mono images from an RL task performed by a simulated robot. Each of the $15$\,$\times$\,$100$) images
+is formed by concatenating line camera images from the last 3 RL time steps.
+
+These datasets are not particularly challenging w.r.t. non-continual classification, although CL tasks formed from these datasets according to the default scenario (\cref{sec:intro:default}) have been shown to be very difficult, see, e.g., \cite{clstuff}. Particular examples of CL tasks formed from MNIST and FashionMNIST that have been used in the literature are $D5-5$, $D9-1$, $D2^5$ or $D1^{10}$, where each number indicates the amount of classes contained in each sub-task. 
 %
 \subsection{ReCT-CL using GMMs and DCGMMs}\label{sec:gmm}
 %
